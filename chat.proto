@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package chatserver;
+
+message FromClient {
+    string name = 1;
+    string body = 2;
+    string room = 3;
+}
+
+message FromServer {
+    string name = 1;
+    string body = 2;
+    string room = 3;
+}
+
+service service {
+
+    rpc ChatService(stream FromClient) returns (stream FromServer){};
+    
+}
