@@ -5,11 +5,13 @@
 ```bash
 go run server.go
 
-# split a new bash
+# split some new bash
 
 go run client.go
 
-localhost:5000
+# enter user name
+# enter room name
+
 ```
 
 ## Demo Result
@@ -18,11 +20,15 @@ localhost:5000
 
 ```bash
 $ go run server.go
-2023/04/23 21:37:54 Listening @ : 5000
-2023/04/23 21:38:27 {johnson hi 19727887 498081}
-2023/04/23 21:38:36 {angel hi 39984059 131847}
-2023/04/23 21:38:38 {angel hi 11902081 131847}
-2023/04/23 21:38:40 {johnson hi 74941318 498081}
+2023/04/29 17:59:02 Listening @ : 5000
+2023/04/29 17:59:42 Johnson is joining room: Cooper's Room
+2023/04/29 17:59:42 There are 1 people in Cooper's Room now.
+2023/04/29 17:59:51 Angel is joining room: Cooper's Room
+2023/04/29 17:59:51 There are 2 people in Cooper's Room now.
+2023/04/29 17:59:56 {Angel Cooper's Room Hi 27131847 727887}
+2023/04/29 17:59:56 Sending message : Hi from Cooper's Room
+2023/04/29 18:00:00 {Johnson Cooper's Room Hi 39984059 498081}
+2023/04/29 18:00:00 Sending message : Hi from Cooper's Room
 ```
 
 ### Client side
@@ -30,25 +36,21 @@ $ go run server.go
 ```bash
 
 $ go run client.go
-Enter Server IP:Port ::: 
-localhost:5000
-2023/04/23 21:38:22 Connecting : localhost:5000
-Your Name : johnson
-hi
-angel : hi 
-angel : hi 
-hi
+2023/04/29 17:59:19 Connecting to : localhost:5000
+Your Name : Johnson
+SYSTEM : Welcome to the chat server! Please enter a room name: 
+Cooper's Room          
+Angel : Hi 
+Hi
 ```
 
 ```bash
 
 $ go run client.go
-Enter Server IP:Port ::: 
-localhost:5000
-2023/04/23 21:38:33 Connecting : localhost:5000
-Your Name : angel
-johnson : hi 
-hi
-hi
-johnson : hi 
+2023/04/29 17:59:20 Connecting to : localhost:5000
+Your Name : Angel
+SYSTEM : Welcome to the chat server! Please enter a room name: 
+Cooper's Room
+Hi
+Johnson : Hi 
 ```
