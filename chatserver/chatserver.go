@@ -65,6 +65,7 @@ func (cs *ChatServer) ChatService(clientStream Service_ChatServiceServer) error 
 
 	// prompt the client to join a room
 	if err := clientConn.clientStream.Send(&FromServer{
+		Name: "SYSTEM",
 		Body: "Welcome to the chat server! Please enter a room name:",
 	}); err != nil {
 		log.Printf("Error sending message to client %d: %v", clientUniqueCode, err)
