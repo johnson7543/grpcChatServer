@@ -11,20 +11,21 @@ import (
 	"github.com/johnson7543/grpcChatServer/chatserver"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 func main() {
 
-	fmt.Println("Enter Server IP:Port ::: ")
-	reader := bufio.NewReader(os.Stdin)
-	serverID, err := reader.ReadString('\n')
+	// fmt.Println("Enter Server IP:Port ::: ")
+	// reader := bufio.NewReader(os.Stdin)
+	// serverID, err := reader.ReadString('\n')
 
-	if err != nil {
-		log.Printf("Failed to read from console :: %v", err)
-	}
-	serverID = strings.Trim(serverID, "\r\n")
-
-	log.Println("Connecting : " + serverID)
+	// if err != nil {
+	// 	log.Printf("Failed to read from console :: %v", err)
+	// }
+	// serverID = strings.Trim(serverID, "\r\n")
+	serverID := "localhost:5000"
+	log.Println("Connecting to : " + serverID)
 
 	//connect to grpc server
 	conn, err := grpc.Dial(serverID, grpc.WithInsecure())
@@ -37,14 +38,23 @@ func main() {
 	//call ChatService to create a stream
 	client := chatserver.NewServiceClient(conn)
 
-	stream, err := client.ChatService(context.Background())
+	// create metadata with the client name
+	clientName := clientConfig()
+	md := metadata.New(map[string]string{"client-name": clientName})
+
+	// create a context with the metadata
+	ctx := metadata.NewOutgoingContext(context.Background(), md)
+
+	stream, err := client.ChatService(ctx)
 	if err != nil {
 		log.Fatalf("Failed to call ChatService :: %v", err)
 	}
 
 	// implement communication with gRPC server
-	ch := clienthandle{stream: stream}
-	ch.clientConfig()
+	ch := clienthandle{
+		stream:     stream,
+		clientName: clientName,
+	}
 	go ch.sendMessage()
 	go ch.receiveMessage()
 
@@ -60,7 +70,7 @@ type clienthandle struct {
 	clientName string
 }
 
-func (ch *clienthandle) clientConfig() {
+func clientConfig() string {
 
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Printf("Your Name : ")
@@ -68,14 +78,12 @@ func (ch *clienthandle) clientConfig() {
 	if err != nil {
 		log.Fatalf(" Failed to read from console :: %v", err)
 	}
-	ch.clientName = strings.Trim(name, "\r\n")
+	return strings.Trim(name, "\r\n")
 
 }
 
-//send message
 func (ch *clienthandle) sendMessage() {
 
-	// create a loop
 	for {
 
 		reader := bufio.NewReader(os.Stdin)
@@ -100,10 +108,8 @@ func (ch *clienthandle) sendMessage() {
 
 }
 
-//receive message
 func (ch *clienthandle) receiveMessage() {
 
-	//create a loop
 	for {
 		mssg, err := ch.stream.Recv()
 		if err != nil {

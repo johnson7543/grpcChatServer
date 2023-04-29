@@ -1,14 +1,18 @@
 package chatserver
 
 import (
+	fmt "fmt"
 	"log"
 	"math/rand"
 	"sync"
 	"time"
+
+	"google.golang.org/grpc/metadata"
 )
 
 type message struct {
 	ClientName       string
+	Room             string
 	Body             string
 	UniqueCode       int
 	ClientUniqueCode int
@@ -24,26 +28,74 @@ type clientConnection struct {
 	mu           sync.Mutex
 }
 
+type Room struct {
+	name         string
+	clients      map[int]*clientConnection // clientUniqueCode -> *clientConnection
+	clientsMutex sync.RWMutex
+}
+
 var (
 	messageQueue      = MessageQueue{}
-	clientConnections = make(map[int]*clientConnection)
+	clientConnections = make(map[int]*clientConnection) // all connected clients
+	rooms             = make(map[string]*Room)          // rooms to client name mapping
+	roomsMutex        = sync.RWMutex{}
 )
 
 type ChatServer struct {
 }
 
 //define ChatService
-func (is *ChatServer) ChatService(clientStream Service_ChatServiceServer) error {
+func (cs *ChatServer) ChatService(clientStream Service_ChatServiceServer) error {
+	// Access the context from the stream
+	ctx := clientStream.Context()
+
+	// Get the client's name from the context metadata
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return fmt.Errorf("failed to get metadata from context")
+	}
+	clientName := md["client-name"][0]
 
 	clientUniqueCode := rand.Intn(1e6)
-
 	clientConn := &clientConnection{
 		clientStream: clientStream,
 	}
-
 	clientConnections[clientUniqueCode] = clientConn
-
 	errorChannel := make(chan error)
+
+	// prompt the client to join a room
+	if err := clientConn.clientStream.Send(&FromServer{
+		Body: "Welcome to the chat server! Please enter a room name:",
+	}); err != nil {
+		log.Printf("Error sending message to client %d: %v", clientUniqueCode, err)
+		delete(clientConnections, clientUniqueCode)
+		return err
+	}
+
+	// receive room name from the client
+	joinRequest, err := clientConn.clientStream.Recv()
+	if err != nil {
+		log.Printf("Error receiving room name from client %d: %v", clientUniqueCode, err)
+		delete(clientConnections, clientUniqueCode)
+		return err
+	}
+
+	log.Printf("%v is joining room: %v", clientName, joinRequest.Body)
+
+	roomName := joinRequest.Body
+
+	// add the client to the room
+	roomsMutex.Lock()
+	room, ok := rooms[roomName]
+	if !ok {
+		room = &Room{
+			name:    roomName,
+			clients: make(map[int]*clientConnection),
+		}
+		rooms[roomName] = room
+	}
+	room.AddClientToRoom(clientConn, clientUniqueCode)
+	roomsMutex.Unlock()
 
 	// receive messages - init a go routine
 	go receiveFromStream(clientConn, clientUniqueCode, errorChannel)
@@ -52,89 +104,132 @@ func (is *ChatServer) ChatService(clientStream Service_ChatServiceServer) error 
 	go sendToStream(clientConn, clientUniqueCode, errorChannel)
 
 	return <-errorChannel
-
 }
 
-//receive messages
+func getRoomForClient(clientUniqueCode_ int) (*Room, error) {
+	for _, room := range rooms {
+		room.clientsMutex.RLock()
+		_, ok := room.clients[clientUniqueCode_]
+		room.clientsMutex.RUnlock()
+
+		if ok {
+			return room, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no room found for client %d", clientUniqueCode_)
+}
+
 func receiveFromStream(clientConn *clientConnection, clientUniqueCode_ int, errorChannel chan error) {
 
-	//implement a loop
 	for {
-		rm, err := clientConn.clientStream.Recv()
+		receiveMessage, err := clientConn.clientStream.Recv()
 		if err != nil {
 			log.Printf("Error in receiving message from client :: %v", err)
 			errorChannel <- err
 		} else {
 
 			messageQueue.mu.Lock()
+			roomsMutex.RLock()
 
-			messageQueue.Messages = append(messageQueue.Messages, message{
-				ClientName:       rm.Name,
-				Body:             rm.Body,
-				UniqueCode:       rand.Intn(1e8),
-				ClientUniqueCode: clientUniqueCode_,
-			})
+			room, err := getRoomForClient(clientUniqueCode_)
+			if err != nil {
+				log.Printf("Error receiving message from client %v in room %v: %v", receiveMessage.Name, room.name, err)
+				errorChannel <- err
+				roomsMutex.RUnlock()
+				messageQueue.mu.Unlock()
+			} else {
+				messageQueue.Messages = append(messageQueue.Messages, message{
+					ClientName:       receiveMessage.Name,
+					Room:             room.name,
+					Body:             receiveMessage.Body,
+					UniqueCode:       rand.Intn(1e8),
+					ClientUniqueCode: clientUniqueCode_,
+				})
 
-			log.Printf("%v", messageQueue.Messages[len(messageQueue.Messages)-1])
+				log.Printf("%v", messageQueue.Messages[len(messageQueue.Messages)-1])
 
-			messageQueue.mu.Unlock()
+				roomsMutex.RUnlock()
+				messageQueue.mu.Unlock()
+			}
 		}
 	}
 }
 
-//send message
 func sendToStream(clientConn *clientConnection, clientUniqueCode_ int, errorChannel chan error) {
 
-	//implement a loop
 	for {
+		time.Sleep(500 * time.Millisecond)
 
-		//loop through messages in Messages
-		for {
-			time.Sleep(500 * time.Millisecond)
+		messageQueue.mu.Lock()
 
-			messageQueue.mu.Lock()
-
-			if len(messageQueue.Messages) == 0 {
-				messageQueue.mu.Unlock()
-				break
-			}
-
-			senderUniqueCode := messageQueue.Messages[0].ClientUniqueCode
-			senderName := messageQueue.Messages[0].ClientName
-			clientMessage := messageQueue.Messages[0].Body
-
+		if len(messageQueue.Messages) == 0 {
 			messageQueue.mu.Unlock()
-
-			// send message to all connected clients except the sender
-			for clientUC, conn := range clientConnections {
-				if clientUC != senderUniqueCode {
-
-					conn.mu.Lock()
-
-					err := conn.clientStream.Send(&FromServer{
-						Name: senderName,
-						Body: clientMessage,
-					})
-
-					conn.mu.Unlock()
-
-					if err != nil {
-						errorChannel <- err
-					}
-				}
-			}
-
-			messageQueue.mu.Lock()
-
-			if len(messageQueue.Messages) > 1 {
-				messageQueue.Messages = messageQueue.Messages[1:] // delete the message at index 0 after sending to receiver
-			} else {
-				messageQueue.Messages = []message{}
-			}
-
-			messageQueue.mu.Unlock()
+			continue
 		}
 
-		time.Sleep(100 * time.Millisecond)
+		message := messageQueue.Messages[0]
+		messageQueue.Messages = messageQueue.Messages[1:]
+
+		messageQueue.mu.Unlock()
+
+		room, ok := rooms[message.Room]
+		if ok {
+			err := room.Broadcast(message)
+
+			if err != nil {
+				log.Printf("Error broadcasting message to client %d in room %v: %v", message.ClientUniqueCode, room.name, err)
+				errorChannel <- err
+			}
+		} else {
+			err := fmt.Errorf("can not find room for %v", message.ClientName)
+			log.Printf("Error broadcasting message to client %d in room %v: %v", message.ClientUniqueCode, room.name, err)
+			errorChannel <- err
+		}
+
 	}
+}
+
+func (room *Room) AddClientToRoom(client *clientConnection, clientUniqueCode_ int) {
+	room.clientsMutex.Lock()
+	defer room.clientsMutex.Unlock()
+
+	room.clients[clientUniqueCode_] = client
+
+	log.Printf("There are %d people in %v now.", len(room.clients), room.name)
+}
+
+func (room *Room) RemoveClientFromRoom(client *clientConnection, clientUniqueCode_ int) {
+	room.clientsMutex.Lock()
+	defer room.clientsMutex.Unlock()
+
+	delete(room.clients, clientUniqueCode_)
+}
+
+func (room *Room) Broadcast(msg message) error {
+	room.clientsMutex.RLock()
+	defer room.clientsMutex.RUnlock()
+
+	for clientUC, conn := range room.clients {
+		if clientUC != msg.ClientUniqueCode {
+
+			conn.mu.Lock()
+
+			log.Printf("Sending message : %v from %v", msg.Body, room.name)
+
+			err := conn.clientStream.Send(&FromServer{
+				Name: msg.ClientName,
+				Body: msg.Body,
+			})
+
+			conn.mu.Unlock()
+
+			if err != nil {
+				log.Printf("Error broadcasting message to client %d in room %v: %v", clientUC, room.name, err)
+				return err
+			}
+		}
+	}
+
+	return nil
 }
