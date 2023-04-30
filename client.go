@@ -4,11 +4,11 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 
 	"github.com/johnson7543/grpcChatServer/chatserver"
+	"github.com/rs/zerolog/log"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -25,13 +25,13 @@ func main() {
 	// }
 	// serverID = strings.Trim(serverID, "\r\n")
 	serverID := "localhost:5000"
-	log.Println("Connecting to : " + serverID)
+	log.Info().Msgf("Connecting to : " + serverID)
 
 	//connect to grpc server
 	conn, err := grpc.Dial(serverID, grpc.WithInsecure())
 
 	if err != nil {
-		log.Fatalf("Faile to conncet to gRPC server :: %v", err)
+		log.Fatal().Msgf("Faile to conncet to gRPC server :: %v", err)
 	}
 	defer conn.Close()
 
@@ -47,7 +47,7 @@ func main() {
 
 	stream, err := client.ChatService(ctx)
 	if err != nil {
-		log.Fatalf("Failed to call ChatService :: %v", err)
+		log.Fatal().Msgf("Failed to call ChatService :: %v", err)
 	}
 
 	// implement communication with gRPC server
@@ -76,7 +76,7 @@ func clientConfig() string {
 	fmt.Printf("Your Name : ")
 	name, err := reader.ReadString('\n')
 	if err != nil {
-		log.Fatalf(" Failed to read from console :: %v", err)
+		log.Error().Msgf(" Failed to read from console :: %v", err)
 	}
 	return strings.Trim(name, "\r\n")
 
@@ -89,7 +89,7 @@ func (ch *clienthandle) sendMessage() {
 		reader := bufio.NewReader(os.Stdin)
 		clientMessage, err := reader.ReadString('\n')
 		if err != nil {
-			log.Fatalf(" Failed to read from console :: %v", err)
+			log.Error().Msgf(" Failed to read from console :: %v", err)
 		}
 		clientMessage = strings.Trim(clientMessage, "\r\n")
 
@@ -101,7 +101,7 @@ func (ch *clienthandle) sendMessage() {
 		err = ch.stream.Send(clientMessageBox)
 
 		if err != nil {
-			log.Printf("Error while sending message to server :: %v", err)
+			log.Error().Msgf("Error while sending message to server :: %v", err)
 		}
 
 	}
@@ -113,10 +113,10 @@ func (ch *clienthandle) receiveMessage() {
 	for {
 		mssg, err := ch.stream.Recv()
 		if err != nil {
-			log.Printf("Error in receiving message from server :: %v", err)
+			log.Error().Msgf("Error in receiving message from server :: %v", err)
 		}
 
-		//print message to console
+		//print message to client's console
 		fmt.Printf("%s : %s \n", mssg.Name, mssg.Body)
 
 	}

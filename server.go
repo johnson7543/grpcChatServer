@@ -1,11 +1,11 @@
 package main
 
 import (
-	"log"
 	"net"
 	"os"
 
 	"github.com/johnson7543/grpcChatServer/chatserver"
+	"github.com/rs/zerolog/log"
 
 	"google.golang.org/grpc"
 )
@@ -21,9 +21,9 @@ func main() {
 	//init listener
 	listen, err := net.Listen("tcp", ":"+Port)
 	if err != nil {
-		log.Fatalf("Could not listen @ %v :: %v", Port, err)
+		log.Fatal().Msgf("Could not listen @ %v :: %v", Port, err)
 	}
-	log.Println("Listening @ : " + Port)
+	log.Info().Msgf("Listening @ : " + Port)
 
 	//gRPC server instance
 	grpcserver := grpc.NewServer()
@@ -35,7 +35,7 @@ func main() {
 	//grpc listen and serve
 	err = grpcserver.Serve(listen)
 	if err != nil {
-		log.Fatalf("Failed to start gRPC Server :: %v", err)
+		log.Fatal().Msgf("Failed to start gRPC Server :: %v", err)
 	}
 
 }
