@@ -2,10 +2,11 @@ package chatserver
 
 import (
 	fmt "fmt"
-	"log"
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/rs/zerolog/log"
 
 	"google.golang.org/grpc/metadata"
 )
@@ -48,11 +49,14 @@ type ChatServer struct {
 func (cs *ChatServer) ChatService(clientStream Service_ChatServiceServer) error {
 	// Access the context from the stream
 	ctx := clientStream.Context()
+	errorChannel := make(chan error)
 
 	// Get the client's name from the context metadata
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return fmt.Errorf("failed to get metadata from context")
+		err := fmt.Errorf("failed to get metadata from context")
+		errorChannel <- err
+		return <-errorChannel
 	}
 	clientName := md["client-name"][0]
 
@@ -61,7 +65,6 @@ func (cs *ChatServer) ChatService(clientStream Service_ChatServiceServer) error 
 		clientStream: clientStream,
 	}
 	clientConnections[clientUniqueCode] = clientConn
-	errorChannel := make(chan error)
 
 	// prompt the client to join a room
 	if err := clientConn.clientStream.Send(&FromServer{
@@ -70,18 +73,23 @@ func (cs *ChatServer) ChatService(clientStream Service_ChatServiceServer) error 
 	}); err != nil {
 		log.Printf("Error sending message to client %d: %v", clientUniqueCode, err)
 		delete(clientConnections, clientUniqueCode)
-		return err
+		errorChannel <- err
+		return <-errorChannel
 	}
 
 	// receive room name from the client
 	joinRequest, err := clientConn.clientStream.Recv()
 	if err != nil {
-		log.Printf("Error receiving room name from client %d: %v", clientUniqueCode, err)
+		log.Error().
+			Err(err).Int("clientUniqueCode", clientUniqueCode).Msgf("Error receiving room name from client")
+		// log.Printf("Error receiving room name from client %d: %v", clientUniqueCode, err)
 		delete(clientConnections, clientUniqueCode)
-		return err
+		errorChannel <- err
+		return <-errorChannel
 	}
 
-	log.Printf("%v is joining room: %v", clientName, joinRequest.Body)
+	log.Info().Msgf("%v is joining room: %v", clientName, joinRequest.Body)
+	// log.Printf("%v is joining room: %v", clientName, joinRequest.Body)
 
 	roomName := joinRequest.Body
 
@@ -126,7 +134,8 @@ func receiveFromStream(clientConn *clientConnection, clientUniqueCode_ int, erro
 	for {
 		receiveMessage, err := clientConn.clientStream.Recv()
 		if err != nil {
-			log.Printf("Error in receiving message from client :: %v", err)
+			log.Error().Err(err).Msgf("Error in receiving message from client")
+			// log.Printf("Error in receiving message from client :: %v", err)
 			errorChannel <- err
 		} else {
 
@@ -135,20 +144,30 @@ func receiveFromStream(clientConn *clientConnection, clientUniqueCode_ int, erro
 
 			room, err := getRoomForClient(clientUniqueCode_)
 			if err != nil {
-				log.Printf("Error receiving message from client %v in room %v: %v", receiveMessage.Name, room.name, err)
+				log.Error().Err(err).Msgf("Error receiving message from client %v in room %v", receiveMessage.Name, room.name)
+				// log.Printf("Error receiving message from client %v in room %v: %v", receiveMessage.Name, room.name, err)
 				errorChannel <- err
 				roomsMutex.RUnlock()
 				messageQueue.mu.Unlock()
 			} else {
+
+				uniqueCode := rand.Intn(1e8)
+
+				log.Info().
+					Str("ClientName", receiveMessage.Name).
+					Str("Room", room.name).
+					Str("Body", receiveMessage.Body).
+					Int("UniqueCode", uniqueCode).
+					Int("ClientUniqueCode", clientUniqueCode_).
+					Msgf("Receiving message : %v from %v", receiveMessage.Body, receiveMessage.Name)
+
 				messageQueue.Messages = append(messageQueue.Messages, message{
 					ClientName:       receiveMessage.Name,
 					Room:             room.name,
 					Body:             receiveMessage.Body,
-					UniqueCode:       rand.Intn(1e8),
+					UniqueCode:       uniqueCode,
 					ClientUniqueCode: clientUniqueCode_,
 				})
-
-				log.Printf("%v", messageQueue.Messages[len(messageQueue.Messages)-1])
 
 				roomsMutex.RUnlock()
 				messageQueue.mu.Unlock()
@@ -179,12 +198,14 @@ func sendToStream(clientConn *clientConnection, clientUniqueCode_ int, errorChan
 			err := room.Broadcast(message)
 
 			if err != nil {
-				log.Printf("Error broadcasting message to client %d in room %v: %v", message.ClientUniqueCode, room.name, err)
+				log.Error().Msgf("Error broadcasting message to client %d in room %v: %v", message.ClientUniqueCode, room.name, err)
+				// log.Printf("Error broadcasting message to client %d in room %v: %v", message.ClientUniqueCode, room.name, err)
 				errorChannel <- err
 			}
 		} else {
 			err := fmt.Errorf("can not find room for %v", message.ClientName)
-			log.Printf("Error broadcasting message to client %d in room %v: %v", message.ClientUniqueCode, room.name, err)
+			log.Error().Err(err).Msgf("Error broadcasting message to client %d in room %v", message.ClientUniqueCode, room.name)
+			// log.Printf("Error broadcasting message to client %d in room %v: %v", message.ClientUniqueCode, room.name, err)
 			errorChannel <- err
 		}
 
@@ -197,7 +218,8 @@ func (room *Room) AddClientToRoom(client *clientConnection, clientUniqueCode_ in
 
 	room.clients[clientUniqueCode_] = client
 
-	log.Printf("There are %d people in %v now.", len(room.clients), room.name)
+	log.Info().Msgf("There are %d people in %v now.", len(room.clients), room.name)
+	// log.Printf("There are %d people in %v now.", len(room.clients), room.name)
 }
 
 func (room *Room) RemoveClientFromRoom(client *clientConnection, clientUniqueCode_ int) {
@@ -216,7 +238,11 @@ func (room *Room) Broadcast(msg message) error {
 
 			conn.mu.Lock()
 
-			log.Printf("Sending message : %v from %v", msg.Body, room.name)
+			log.Info().
+				Str("Name", msg.ClientName).
+				Str("Body", msg.Body).
+				Msgf("Sending message : %v from %v", msg.Body, room.name)
+			// log.Printf("Sending message : %v from %v", msg.Body, room.name)
 
 			err := conn.clientStream.Send(&FromServer{
 				Name: msg.ClientName,
@@ -226,7 +252,8 @@ func (room *Room) Broadcast(msg message) error {
 			conn.mu.Unlock()
 
 			if err != nil {
-				log.Printf("Error broadcasting message to client %d in room %v: %v", clientUC, room.name, err)
+				log.Error().Err(err).Msgf("Error broadcasting message to client %d in room %v", clientUC, room.name)
+				// log.Printf("Error broadcasting message to client %d in room %v: %v", clientUC, room.name, err)
 				return err
 			}
 		}
